@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.core.config import get_settings
 from app.models.retrieval import RetrievalRequest, RetrievalResponse, RetrievalResponseItem
-from app.services.retrieval import create_retrieval_service
+from app.services.reranked_retrieval import create_reranked_retrieval_service
 
 router = APIRouter(prefix="/retrieval", tags=["retrieval"])
 
@@ -11,7 +11,7 @@ router = APIRouter(prefix="/retrieval", tags=["retrieval"])
 def search(payload: RetrievalRequest) -> RetrievalResponse:
     """Return ranked semantic matches, without generating an answer."""
     try:
-        results = create_retrieval_service(get_settings()).retrieve(
+        results = create_reranked_retrieval_service(get_settings()).retrieve(
             repository_id=payload.repository_id,
             query=payload.query,
             top_k=payload.top_k,
@@ -24,15 +24,20 @@ def search(payload: RetrievalRequest) -> RetrievalResponse:
         query=payload.query,
         results=[
             RetrievalResponseItem(
-                rank=rank,
-                score=result.score,
+                rank=result.rank,
+                score=result.relevance_score,
                 file_path=result.chunk.file_path,
                 start_line=result.chunk.start_line,
                 end_line=result.chunk.end_line,
                 symbol_name=result.chunk.symbol_name,
                 chunk_type=result.chunk.chunk_type,
                 content=result.chunk.content,
+                fused_score=result.hybrid_score,
+                vector_rank=result.vector_rank,
+                bm25_rank=result.bm25_rank,
+                relevance_score=result.relevance_score,
+                hybrid_score=result.hybrid_score,
             )
-            for rank, result in enumerate(results, start=1)
+            for result in results
         ],
     )

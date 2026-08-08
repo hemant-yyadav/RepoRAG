@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.core.config import get_settings
 from app.models.citation import AnswerRequest, AnswerResponse, CitationResponse
 from app.services.generation import GenerationProviderError, create_generation_service
-from app.services.retrieval import create_retrieval_service
+from app.services.reranked_retrieval import create_reranked_retrieval_service
 
 router = APIRouter(prefix="/answers", tags=["answers"])
 
@@ -13,7 +13,7 @@ def generate_answer(payload: AnswerRequest) -> AnswerResponse:
     """Generate a grounded answer and return only citations verified by the backend."""
     try:
         settings = get_settings()
-        retrieved = create_retrieval_service(settings).retrieve(
+        retrieved = create_reranked_retrieval_service(settings).retrieve(
             repository_id=payload.repository_id,
             query=payload.query,
             top_k=payload.top_k,

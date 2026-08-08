@@ -1,0 +1,9 @@
+{
+  "run_name": "YYYY-MM-DD-baseline",
+  "repository_id": "sample-repository",
+  "pipelines": {
+    "vector_only": {"hit_at_1": null, "hit_at_5": null, "mrr": null, "notes": ""},
+    "hybrid": {"hit_at_1": null, "hit_at_5": null, "mrr": null, "notes": ""},
+    "hybrid_reranking": {"hit_at_1": null, "hit_at_5": null, "mrr": null, "notes": ""}
+  }
+}

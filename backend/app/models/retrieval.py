@@ -30,6 +30,11 @@ class RetrievalResponseItem(BaseModel):
     symbol_name: str | None
     chunk_type: str
     content: str
+    fused_score: float | None = None
+    vector_rank: int | None = None
+    bm25_rank: int | None = None
+    relevance_score: float | None = None
+    hybrid_score: float | None = None
 
 
 class RetrievalResponse(BaseModel):

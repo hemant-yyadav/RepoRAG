@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     qdrant_collection_name: str = "codebase_chunks"
     retrieval_top_k: int = 5
     retrieval_score_threshold: float | None = None
+    retrieval_candidate_pool_size: int = 20
+    retrieval_rrf_k: int = 60
+    retrieval_vector_weight: float = 1.0
+    retrieval_bm25_weight: float = 1.0
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    reranker_candidate_count: int = 20
+    reranker_final_count: int = 5
+    reranker_batch_size: int = 16
+    reranker_fail_open: bool = True
     generation_max_context_chars: int = 20_000
     generation_max_context_chunks: int = 12
 
