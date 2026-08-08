@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes.health import router as health_router
 from app.api.routes.answers import router as answers_router
+from app.api.routes.chat import router as chat_router
 from app.api.routes.repositories import router as repositories_router
 from app.api.routes.retrieval import router as retrieval_router
 from app.core.config import get_settings
@@ -40,5 +41,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 app.include_router(health_router)
 app.include_router(answers_router)
+app.include_router(chat_router)
 app.include_router(repositories_router)
 app.include_router(retrieval_router)

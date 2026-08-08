@@ -1,6 +1,6 @@
 # Codebase RAG Assistant
 
-The project currently provides application scaffolding, public GitHub repository ingestion, code-aware chunking, a provider-independent embedding pipeline, Qdrant vector storage, hybrid repository-isolated retrieval, neural reranking, and grounded Gemini answer generation with validated source tracking. Generation receives only the reranked final context. It does **not** implement conversation memory or frontend chat.
+The project currently provides application scaffolding, public GitHub repository ingestion, code-aware chunking, a provider-independent embedding pipeline, Qdrant vector storage, hybrid repository-isolated retrieval, neural reranking, grounded Gemini answer generation with validated source tracking, and bounded conversational querying. Generation receives only the reranked final context. It does **not** implement a frontend chat UI.
 
 ## Repository layout
 

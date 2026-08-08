@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     reranker_final_count: int = 5
     reranker_batch_size: int = 16
     reranker_fail_open: bool = True
+    conversation_max_history_messages: int = 12
+    conversation_rewrite_history_length: int = 6
     generation_max_context_chars: int = 20_000
     generation_max_context_chunks: int = 12
 
