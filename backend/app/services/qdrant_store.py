@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from qdrant_client import QdrantClient, models
 
+from app.core.resilience import retry_operation
 from app.models.embedding import EmbeddedChunk
 from app.models.chunk import CodeChunk
 
@@ -35,28 +36,33 @@ class StoredChunk:
 class QdrantStore:
     """Owns collection lifecycle and isolated repository-level persistence."""
 
-    def __init__(self, client: QdrantClient, collection_name: str) -> None:
+    def __init__(self, client: QdrantClient, collection_name: str, max_retries: int = 2, initial_backoff_seconds: float = 0.5) -> None:
         if not collection_name.strip():
             raise ValueError("Qdrant collection name must not be blank")
         self._client = client
         self.collection_name = collection_name
+        self._max_retries = max_retries
+        self._initial_backoff_seconds = initial_backoff_seconds
 
     @classmethod
-    def from_settings(cls, url: str | None, api_key: str | None, collection_name: str) -> "QdrantStore":
+    def from_settings(cls, url: str | None, api_key: str | None, collection_name: str, max_retries: int = 2, initial_backoff_seconds: float = 0.5) -> "QdrantStore":
         if not url:
             raise ValueError("QDRANT_URL is required")
-        return cls(QdrantClient(url=url, api_key=api_key), collection_name)
+        return cls(QdrantClient(url=url, api_key=api_key), collection_name, max_retries, initial_backoff_seconds)
+
+    def _call(self, operation: str, call):
+        return retry_operation(operation, call, (Exception,), self._max_retries, self._initial_backoff_seconds, logger)
 
     def ensure_collection(self, vector_size: int) -> None:
         if vector_size < 1:
             raise ValueError("vector size must be positive")
-        if self._client.collection_exists(self.collection_name):
+        if self._call("qdrant_collection_exists", lambda: self._client.collection_exists(self.collection_name)):
             return
         logger.info("creating Qdrant collection %s with vector size %d", self.collection_name, vector_size)
-        self._client.create_collection(
+        self._call("qdrant_create_collection", lambda: self._client.create_collection(
             collection_name=self.collection_name,
             vectors_config=models.VectorParams(size=vector_size, distance=models.Distance.COSINE),
-        )
+        ))
 
     def upsert(self, embedded_chunks: Sequence[EmbeddedChunk]) -> None:
         if not embedded_chunks:
@@ -73,7 +79,7 @@ class QdrantStore:
             )
             for chunk in embedded_chunks
         ]
-        self._client.upsert(collection_name=self.collection_name, points=points, wait=True)
+        self._call("qdrant_upsert", lambda: self._client.upsert(collection_name=self.collection_name, points=points, wait=True))
         logger.info("upserted %d chunks into %s", len(points), self.collection_name)
 
     def replace_repository(self, repository_id: str, embedded_chunks: Sequence[EmbeddedChunk]) -> None:
@@ -82,23 +88,23 @@ class QdrantStore:
         self.upsert(embedded_chunks)
 
     def delete_repository(self, repository_id: str) -> None:
-        if not self._client.collection_exists(self.collection_name):
+        if not self._call("qdrant_collection_exists", lambda: self._client.collection_exists(self.collection_name)):
             return
-        self._client.delete(
+        self._call("qdrant_delete", lambda: self._client.delete(
             collection_name=self.collection_name,
             points_selector=models.FilterSelector(filter=self.repository_filter(repository_id)),
             wait=True,
-        )
+        ))
         logger.info("deleted indexed chunks for repository %s", repository_id)
 
     def repository_status(self, repository_id: str) -> RepositoryIndexStatus:
-        if not self._client.collection_exists(self.collection_name):
+        if not self._call("qdrant_collection_exists", lambda: self._client.collection_exists(self.collection_name)):
             return RepositoryIndexStatus(repository_id=repository_id, indexed_chunk_count=0)
-        result = self._client.count(
+        result = self._call("qdrant_count", lambda: self._client.count(
             collection_name=self.collection_name,
             count_filter=self.repository_filter(repository_id),
             exact=True,
-        )
+        ))
         return RepositoryIndexStatus(repository_id=repository_id, indexed_chunk_count=result.count)
 
     def similarity_search(
@@ -112,12 +118,12 @@ class QdrantStore:
         """Run a repository-scoped vector search; answer generation is out of scope."""
         if limit < 1:
             raise ValueError("search limit must be positive")
-        if not self._client.collection_exists(self.collection_name):
+        if not self._call("qdrant_collection_exists", lambda: self._client.collection_exists(self.collection_name)):
             return []
         criteria: dict[str, str | int | bool] = {"repository_id": repository_id}
         if metadata_filters:
             criteria.update(metadata_filters)
-        response = self._client.query_points(
+        response = self._call("qdrant_query", lambda: self._client.query_points(
             collection_name=self.collection_name,
             query=list(query_vector),
             query_filter=metadata_filter(criteria),
@@ -125,7 +131,7 @@ class QdrantStore:
             score_threshold=score_threshold,
             with_payload=True,
             with_vectors=False,
-        )
+        ))
         return [
             StoredSearchResult(score=point.score, payload=dict(point.payload or {}))
             for point in response.points
@@ -135,18 +141,18 @@ class QdrantStore:
         self, repository_id: str, filters: Mapping[str, str | int | bool] | None = None, limit: int = 200
     ) -> list[StoredChunk]:
         """List exact repository chunks by metadata for file/symbol inspection."""
-        if limit < 1 or not self._client.collection_exists(self.collection_name):
+        if limit < 1 or not self._call("qdrant_collection_exists", lambda: self._client.collection_exists(self.collection_name)):
             return []
         criteria: dict[str, str | int | bool] = {"repository_id": repository_id}
         if filters:
             criteria.update(filters)
-        points, _ = self._client.scroll(
+        points, _ = self._call("qdrant_scroll", lambda: self._client.scroll(
             collection_name=self.collection_name,
             scroll_filter=metadata_filter(criteria),
             limit=limit,
             with_payload=True,
             with_vectors=False,
-        )
+        ))
         chunks = [StoredChunk(chunk=chunk_from_payload(dict(point.payload or {}))) for point in points]
         return sorted(chunks, key=lambda item: (item.chunk.file_path, item.chunk.start_line, item.chunk.chunk_id))
 

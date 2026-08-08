@@ -9,6 +9,7 @@ from typing import Protocol
 import httpx
 
 from app.core.config import Settings
+from app.core.observability import log_timing
 from app.models.chunk import CodeChunk
 from app.models.embedding import EmbeddedChunk
 
@@ -110,15 +111,16 @@ class EmbeddingService:
         if not chunks:
             return []
         embedded: list[EmbeddedChunk] = []
-        for batch_number, batch in enumerate(_batches(chunks, self._config.batch_size), start=1):
-            logger.info("embedding batch %d containing %d chunks", batch_number, len(batch))
-            vectors = self._embed_with_retry([chunk.content for chunk in batch])
-            if len(vectors) != len(batch):
-                raise EmbeddingProviderError("Embedding provider returned a mismatched vector count")
-            embedded.extend(
-                EmbeddedChunk(chunk_id=chunk.chunk_id, vector=vector, chunk=chunk)
-                for chunk, vector in zip(batch, vectors, strict=True)
-            )
+        with log_timing(logger, "embedding", chunk_count=len(chunks)):
+            for batch_number, batch in enumerate(_batches(chunks, self._config.batch_size), start=1):
+                logger.info("embedding batch %d containing %d chunks", batch_number, len(batch))
+                vectors = self._embed_with_retry([chunk.content for chunk in batch])
+                if len(vectors) != len(batch):
+                    raise EmbeddingProviderError("Embedding provider returned a mismatched vector count")
+                embedded.extend(
+                    EmbeddedChunk(chunk_id=chunk.chunk_id, vector=vector, chunk=chunk)
+                    for chunk, vector in zip(batch, vectors, strict=True)
+                )
         return embedded
 
     def embed_texts(self, texts: Sequence[str]) -> list[list[float]]:

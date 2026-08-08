@@ -30,6 +30,8 @@ def _summary(record: RepositoryRecord) -> RepositorySummaryResponse:
         file_count=record.file_count,
         total_size_bytes=record.total_size_bytes,
         languages=record.languages,
+        stage=record.stage,
+        progress_percent=record.progress_percent,
     )
 
 

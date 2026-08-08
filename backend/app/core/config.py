@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     qdrant_api_key: str | None = Field(default=None, repr=False)
     max_file_size_bytes: int = 1_048_576
     git_clone_timeout_seconds: int = 60
+    github_max_retries: int = 2
+    github_initial_backoff_seconds: float = 1.0
+    max_repository_files: int = 10_000
+    max_repository_size_bytes: int = 50_000_000
     max_chunk_size: int = 4_000
     chunk_overlap_lines: int = 2
     min_chunk_size: int = 200
@@ -49,6 +53,12 @@ class Settings(BaseSettings):
     file_inspection_max_chunks: int = 200
     generation_max_context_chars: int = 20_000
     generation_max_context_chunks: int = 12
+    gemini_max_retries: int = 2
+    gemini_initial_backoff_seconds: float = 1.0
+    qdrant_max_retries: int = 2
+    qdrant_initial_backoff_seconds: float = 0.5
+    indexing_max_retries: int = 1
+    indexing_initial_backoff_seconds: float = 1.0
 
     model_config = SettingsConfigDict(
         env_file="../.env", env_file_encoding="utf-8", extra="ignore"

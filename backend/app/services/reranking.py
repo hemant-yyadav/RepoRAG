@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from app.core.config import Settings
+from app.core.observability import log_timing
 from app.models.hybrid_retrieval import HybridRetrievalResult
 from app.models.reranking import RerankedRetrievalResult
 
@@ -83,20 +84,21 @@ class RerankingService:
         if limit < 1:
             raise ValueError("final count must be positive")
         selected = list(candidates[: self._config.candidate_count])
-        try:
-            scores = self._provider.rerank(
-                query,
-                [candidate.chunk.content for candidate in selected],
-                self._config.model,
-                self._config.batch_size,
-            )
-            if len(scores) != len(selected):
-                raise RerankerProviderError("Reranker returned a mismatched score count")
-        except RerankerProviderError:
-            if not self._config.fail_open:
-                raise
-            logger.warning("reranker failed; using hybrid ranking as fallback")
-            scores = [candidate.fused_score for candidate in selected]
+        with log_timing(logger, "reranking", candidate_count=len(selected)):
+            try:
+                scores = self._provider.rerank(
+                    query,
+                    [candidate.chunk.content for candidate in selected],
+                    self._config.model,
+                    self._config.batch_size,
+                )
+                if len(scores) != len(selected):
+                    raise RerankerProviderError("Reranker returned a mismatched score count")
+            except RerankerProviderError:
+                if not self._config.fail_open:
+                    raise
+                logger.warning("reranker failed; using hybrid ranking as fallback")
+                scores = [candidate.fused_score for candidate in selected]
 
         ranked = sorted(
             zip(selected, scores, strict=True),

@@ -1,6 +1,7 @@
 """Practical repository/file/symbol inspection built on indexed chunk metadata."""
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
+from pathlib import PurePosixPath
 from typing import Protocol
 
 from app.core.config import Settings
@@ -32,7 +33,9 @@ class RepositoryCodeIntelligenceService:
         self._max_file_chunks = max_file_chunks
 
     def get_file(self, repository_id: str, file_path: str) -> list[StoredChunk]:
-        return self._inspector.list_chunks(repository_id, {"file_path": file_path}, self._max_file_chunks)
+        return self._inspector.list_chunks(
+            repository_id, {"file_path": validate_indexed_path(file_path)}, self._max_file_chunks
+        )
 
     def list_files(self, repository_id: str) -> list[StoredChunk]:
         return self._inspector.list_chunks(repository_id, limit=self._max_file_chunks)
@@ -58,6 +61,8 @@ class RepositoryCodeIntelligenceService:
             }.items()
             if value
         }
+        if file_path:
+            filters["file_path"] = validate_indexed_path(file_path)
         return self._retriever.retrieve(
             repository_id, query, top_k=top_k, metadata_filters=filters or None
         )
@@ -72,8 +77,21 @@ class RepositoryCodeIntelligenceService:
 
 def create_code_intelligence_service(settings: Settings) -> RepositoryCodeIntelligenceService:
     return RepositoryCodeIntelligenceService(
-        inspector=QdrantStore.from_settings(settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_collection_name),
+        inspector=QdrantStore.from_settings(
+            settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_collection_name,
+            settings.qdrant_max_retries, settings.qdrant_initial_backoff_seconds,
+        ),
         retriever=create_reranked_retrieval_service(settings),
         generator_factory=lambda: create_generation_service(settings),
         max_file_chunks=settings.file_inspection_max_chunks,
     )
+
+
+def validate_indexed_path(file_path: str) -> str:
+    """Accept only normalized repository-relative POSIX paths, never host filesystem paths."""
+    if not file_path or "\\" in file_path or file_path.startswith("./"):
+        raise ValueError("file_path must be a repository-relative POSIX path")
+    path = PurePosixPath(file_path)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError("file_path must not contain traversal segments")
+    return path.as_posix()

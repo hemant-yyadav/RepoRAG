@@ -29,7 +29,10 @@ def main() -> None:
     RepositoryIndexingService(
         CodeChunkingService(),
         create_embedding_service(settings),
-        QdrantStore.from_settings(settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_collection_name),
+        QdrantStore.from_settings(
+            settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_collection_name,
+            settings.qdrant_max_retries, settings.qdrant_initial_backoff_seconds,
+        ),
     ).index_repository(args.repository_id, files)
     vector = create_retrieval_service(settings)
     hybrid = create_hybrid_retrieval_service(settings)

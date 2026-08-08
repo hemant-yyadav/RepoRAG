@@ -4,12 +4,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from app.core.config import Settings
+from app.core.observability import log_timing
+import logging
 from app.models.hybrid_retrieval import HybridRetrievalResult
 from app.services.lexical import BM25Index
 from app.services.retrieval import QueryEmbedder, VectorSearcher, RetrievalService
 from app.services.embedding import create_embedding_service
 from app.services.qdrant_store import QdrantStore
 from app.services.lexical import get_lexical_index
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,19 +64,15 @@ class HybridRetrievalService:
         requested_top_k = top_k or self._config.top_k
         if requested_top_k < 1:
             raise ValueError("top_k must be positive")
-        vectors = self._embedder.embed_texts([query])
-        if len(vectors) != 1:
-            raise ValueError("query embedding provider returned an invalid vector count")
-        semantic = self._vector_store.similarity_search(
-            repository_id,
-            vectors[0],
-            self._config.candidate_pool_size,
-            score_threshold if score_threshold is not None else self._config.score_threshold,
-            metadata_filters,
-        )
-        lexical = self._lexical_index.search(
-            repository_id, query, self._config.candidate_pool_size, metadata_filters
-        )
+        with log_timing(logger, "hybrid_retrieval", repository_id=repository_id):
+            vectors = self._embedder.embed_texts([query])
+            if len(vectors) != 1:
+                raise ValueError("query embedding provider returned an invalid vector count")
+            semantic = self._vector_store.similarity_search(
+                repository_id, vectors[0], self._config.candidate_pool_size,
+                score_threshold if score_threshold is not None else self._config.score_threshold, metadata_filters,
+            )
+            lexical = self._lexical_index.search(repository_id, query, self._config.candidate_pool_size, metadata_filters)
         return fuse_ranked_results(semantic, lexical, self._config, requested_top_k)
 
 
@@ -118,7 +118,8 @@ def create_hybrid_retrieval_service(settings: Settings) -> HybridRetrievalServic
     return HybridRetrievalService(
         embedder=create_embedding_service(settings),
         vector_store=QdrantStore.from_settings(
-            settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_collection_name
+            settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_collection_name,
+            settings.qdrant_max_retries, settings.qdrant_initial_backoff_seconds,
         ),
         lexical_index=get_lexical_index(),
         config=HybridRetrievalConfig(

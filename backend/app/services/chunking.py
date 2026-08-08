@@ -2,11 +2,15 @@
 
 import ast
 import hashlib
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.models.chunk import CodeChunk
 from app.models.repository import RepositoryFile
+from app.core.observability import log_timing
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,8 +38,9 @@ class CodeChunkingService:
 
     def chunk_files(self, repository_id: str, files: Iterable[RepositoryFile]) -> list[CodeChunk]:
         chunks: list[CodeChunk] = []
-        for repository_file in files:
-            chunks.extend(self.chunk_file(repository_id, repository_file))
+        with log_timing(logger, "chunking", repository_id=repository_id):
+            for repository_file in files:
+                chunks.extend(self.chunk_file(repository_id, repository_file))
         return chunks
 
     def chunk_file(self, repository_id: str, repository_file: RepositoryFile) -> list[CodeChunk]:

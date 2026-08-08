@@ -122,7 +122,11 @@ def get_conversation_service(settings: Settings) -> ConversationalRetrievalServi
         _shared_conversation_service = ConversationalRetrievalService(
             store=ConversationStore(settings.conversation_max_history_messages),
             rewriter=QueryRewriter(
-                GeminiProvider(api_key=settings.gemini_api_key),
+                GeminiProvider(
+                    api_key=settings.gemini_api_key,
+                    max_retries=settings.gemini_max_retries,
+                    initial_backoff_seconds=settings.gemini_initial_backoff_seconds,
+                ),
                 settings.gemini_model,
                 settings.conversation_rewrite_history_length,
             ),

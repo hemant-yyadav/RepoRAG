@@ -89,7 +89,8 @@ def create_retrieval_service(settings: Settings) -> RetrievalService:
     return RetrievalService(
         embedder=create_embedding_service(settings),
         vector_store=QdrantStore.from_settings(
-            settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_collection_name
+            settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_collection_name,
+            settings.qdrant_max_retries, settings.qdrant_initial_backoff_seconds,
         ),
         default_top_k=settings.retrieval_top_k,
         default_score_threshold=settings.retrieval_score_threshold,

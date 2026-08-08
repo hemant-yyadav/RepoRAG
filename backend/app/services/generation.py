@@ -8,6 +8,8 @@ from typing import Protocol
 
 import httpx
 
+from app.core.observability import log_timing
+from app.core.resilience import retry_operation
 from app.core.config import Settings
 from app.models.generation import GeneratedAnswer
 from app.models.citation import SourceCitation
@@ -25,6 +27,10 @@ Only use source identifiers that appear in the retrieved context."""
 
 class GenerationProviderError(Exception):
     """A generation provider request could not be completed."""
+
+
+class TransientGenerationProviderError(GenerationProviderError):
+    """A rate limit or transient network/server error that may be retried."""
 
 
 class LLMProvider(Protocol):
@@ -63,6 +69,8 @@ class GeminiProvider:
         api_key: str,
         base_url: str = "https://generativelanguage.googleapis.com/v1beta",
         timeout_seconds: float = 60.0,
+        max_retries: int = 2,
+        initial_backoff_seconds: float = 1.0,
         client: httpx.Client | None = None,
     ) -> None:
         if not api_key:
@@ -70,25 +78,40 @@ class GeminiProvider:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._client = client or httpx.Client(timeout=timeout_seconds)
+        self._max_retries = max_retries
+        self._initial_backoff_seconds = initial_backoff_seconds
 
     def generate(self, prompt: str, model: str) -> str:
         if not model.strip():
             raise ValueError("Gemini model must not be blank")
         model_name = model.removeprefix("models/")
-        try:
-            response = self._client.post(
+        def call() -> dict[str, object]:
+            try:
+                response = self._client.post(
                 f"{self._base_url}/models/{model_name}:generateContent",
                 params={"key": self._api_key},
                 json={
                     "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTIONS}]},
                     "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 },
+                )
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 429 or exc.response.status_code >= 500:
+                    raise TransientGenerationProviderError("Gemini is temporarily unavailable") from exc
+                raise GenerationProviderError("Gemini rejected the request") from exc
+            except httpx.TransportError as exc:
+                raise TransientGenerationProviderError("Gemini network request failed") from exc
+        try:
+            payload = retry_operation(
+                "gemini_generation", call, (TransientGenerationProviderError,),
+                self._max_retries, self._initial_backoff_seconds, logger,
             )
-            response.raise_for_status()
-            candidates = response.json()["candidates"]
+            candidates = payload["candidates"]
             parts = candidates[0]["content"]["parts"]
             answer = "".join(part.get("text", "") for part in parts).strip()
-        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+        except (GenerationProviderError, KeyError, IndexError, TypeError, ValueError) as exc:
             raise GenerationProviderError("Gemini generation request failed") from exc
         if not answer:
             raise GenerationProviderError("Gemini returned an empty answer")
@@ -117,8 +140,8 @@ class GenerationService:
                 context_char_count=0,
             )
         prompt = build_prompt(question, cited_context.content)
-        logger.info("generating answer from %d retrieved chunks", len(cited_context.citations))
-        answer = self._provider.generate(prompt, self._config.model)
+        with log_timing(logger, "generation", chunk_count=len(cited_context.citations)):
+            answer = self._provider.generate(prompt, self._config.model)
         answer, sources = validate_answer_citations(answer, cited_context.citations)
         return GeneratedAnswer(
             answer=answer,
@@ -212,7 +235,11 @@ def create_generation_service(settings: Settings) -> GenerationService:
     if not settings.gemini_model:
         raise ValueError("GEMINI_MODEL is required")
     return GenerationService(
-        provider=GeminiProvider(api_key=settings.gemini_api_key),
+        provider=GeminiProvider(
+            api_key=settings.gemini_api_key,
+            max_retries=settings.gemini_max_retries,
+            initial_backoff_seconds=settings.gemini_initial_backoff_seconds,
+        ),
         config=GenerationConfig(
             model=settings.gemini_model,
             max_context_chars=settings.generation_max_context_chars,

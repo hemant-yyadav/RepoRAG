@@ -13,6 +13,8 @@ class RepositorySummaryResponse(BaseModel):
     file_count: int = 0
     total_size_bytes: int = 0
     languages: list[str] = []
+    stage: str = "queued"
+    progress_percent: int = 0
 
 
 class RepositoryStatusResponse(RepositorySummaryResponse):

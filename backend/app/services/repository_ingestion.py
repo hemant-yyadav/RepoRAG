@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from app.core.observability import log_timing
+from app.core.resilience import retry_operation
 from app.models.repository import RepositoryFile
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,8 @@ IGNORED_DIRECTORIES = {
     "build",
     "target",
     "coverage",
+    "generated",
+    "vendor",
 }
 IGNORED_FILENAMES = {".env"}
 
@@ -65,6 +69,10 @@ class InvalidRepositoryUrlError(RepositoryIngestionError):
 
 class RepositoryCloneError(RepositoryIngestionError):
     """Raised when Git cannot obtain a repository."""
+
+
+class RepositorySizeLimitError(RepositoryIngestionError):
+    """Raised when a repository exceeds configured safety limits."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,11 +129,24 @@ def should_ignore_path(path: Path, root: Path) -> bool:
     if any(part in IGNORED_DIRECTORIES for part in relative_parts[:-1]):
         return True
     filename = path.name.lower()
-    return filename in IGNORED_FILENAMES or filename.startswith(".env.") or ".min." in filename
+    return (
+        filename in IGNORED_FILENAMES
+        or filename.startswith(".env.")
+        or ".min." in filename
+        or ".generated." in filename
+        or filename.endswith(".map")
+    )
 
 
-def iter_repository_files(root: Path, max_file_size_bytes: int) -> Iterable[RepositoryFile]:
+def iter_repository_files(
+    root: Path,
+    max_file_size_bytes: int,
+    max_repository_files: int = 10_000,
+    max_repository_size_bytes: int = 50_000_000,
+) -> Iterable[RepositoryFile]:
     """Walk a checkout and yield only supported, bounded, non-binary source files."""
+    included_count = 0
+    included_size = 0
     for path in root.rglob("*"):
         if not path.is_file() or should_ignore_path(path, root):
             continue
@@ -140,6 +161,12 @@ def iter_repository_files(root: Path, max_file_size_bytes: int) -> Iterable[Repo
         if b"\x00" in raw_content:
             logger.info("skipping binary file: %s", path)
             continue
+        included_count += 1
+        included_size += size_bytes
+        if included_count > max_repository_files:
+            raise RepositorySizeLimitError("Repository exceeds the configured file-count limit")
+        if included_size > max_repository_size_bytes:
+            raise RepositorySizeLimitError("Repository exceeds the configured size limit")
         content = raw_content.decode("utf-8", errors="replace")
         yield RepositoryFile(
             path=path.relative_to(root).as_posix(),
@@ -153,16 +180,31 @@ def iter_repository_files(root: Path, max_file_size_bytes: int) -> Iterable[Repo
 class RepositoryIngestionService:
     """Clones a public repository to a temporary location and normalizes its files."""
 
-    def __init__(self, max_file_size_bytes: int, clone_timeout_seconds: int) -> None:
+    def __init__(
+        self,
+        max_file_size_bytes: int,
+        clone_timeout_seconds: int,
+        max_repository_files: int = 10_000,
+        max_repository_size_bytes: int = 50_000_000,
+        max_retries: int = 2,
+        initial_backoff_seconds: float = 1.0,
+    ) -> None:
         self.max_file_size_bytes = max_file_size_bytes
         self.clone_timeout_seconds = clone_timeout_seconds
+        self.max_repository_files = max_repository_files
+        self.max_repository_size_bytes = max_repository_size_bytes
+        self.max_retries = max_retries
+        self.initial_backoff_seconds = initial_backoff_seconds
 
     def ingest(self, repository_url: str) -> IngestionResult:
         repository = parse_github_repository_url(repository_url)
-        with tempfile.TemporaryDirectory(prefix="codebase-rag-") as temporary_directory:
-            checkout_path = Path(temporary_directory) / "repository"
-            self._clone(repository.canonical_url, checkout_path)
-            files = list(iter_repository_files(checkout_path, self.max_file_size_bytes))
+        with log_timing(logger, "repository_ingestion", repository=repository.name):
+            with tempfile.TemporaryDirectory(prefix="codebase-rag-") as temporary_directory:
+                checkout_path = Path(temporary_directory) / "repository"
+                self._clone(repository.canonical_url, checkout_path)
+                files = list(iter_repository_files(
+                    checkout_path, self.max_file_size_bytes, self.max_repository_files, self.max_repository_size_bytes
+                ))
 
         logger.info("ingested repository %s with %d files", repository.name, len(files))
         return IngestionResult(
@@ -174,13 +216,20 @@ class RepositoryIngestionService:
     def _clone(self, repository_url: str, checkout_path: Path) -> None:
         if shutil.which("git") is None:
             raise RepositoryCloneError("Git is required to ingest repositories")
-        try:
+        def clone() -> None:
+            if checkout_path.exists():
+                shutil.rmtree(checkout_path)
             subprocess.run(
                 ["git", "clone", "--depth", "1", "--no-tags", repository_url, str(checkout_path)],
                 check=True,
                 capture_output=True,
                 text=True,
                 timeout=self.clone_timeout_seconds,
+            )
+        try:
+            retry_operation(
+                "github_clone", clone, (subprocess.CalledProcessError, subprocess.TimeoutExpired),
+                self.max_retries, self.initial_backoff_seconds, logger,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             logger.warning("repository clone failed for %s", repository_url)
