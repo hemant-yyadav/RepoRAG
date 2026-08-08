@@ -1,6 +1,6 @@
 """Fusion of semantic and lexical repository-scoped retrieval results."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from app.core.config import Settings
@@ -53,6 +53,7 @@ class HybridRetrievalService:
         query: str,
         top_k: int | None = None,
         score_threshold: float | None = None,
+        metadata_filters: Mapping[str, str | int | bool] | None = None,
     ) -> list[HybridRetrievalResult]:
         if not repository_id.strip() or not query.strip():
             raise ValueError("repository_id and query must not be blank")
@@ -67,8 +68,11 @@ class HybridRetrievalService:
             vectors[0],
             self._config.candidate_pool_size,
             score_threshold if score_threshold is not None else self._config.score_threshold,
+            metadata_filters,
         )
-        lexical = self._lexical_index.search(repository_id, query, self._config.candidate_pool_size)
+        lexical = self._lexical_index.search(
+            repository_id, query, self._config.candidate_pool_size, metadata_filters
+        )
         return fuse_ranked_results(semantic, lexical, self._config, requested_top_k)
 
 

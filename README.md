@@ -1,6 +1,6 @@
 # Codebase RAG Assistant
 
-The project currently provides application scaffolding, public GitHub repository ingestion, code-aware chunking, a provider-independent embedding pipeline, Qdrant vector storage, hybrid repository-isolated retrieval, neural reranking, grounded Gemini answer generation with validated source tracking, and bounded conversational querying. Generation receives only the reranked final context. It does **not** implement a frontend chat UI.
+The project currently provides application scaffolding, public GitHub repository ingestion, code-aware chunking, a provider-independent embedding pipeline, Qdrant vector storage, hybrid repository-isolated retrieval, neural reranking, grounded Gemini answer generation with validated source tracking, conversational querying, file/symbol-aware code intelligence, and a production-style FastAPI API. Generation receives only bounded selected context. It does **not** implement a frontend chat UI.
 
 ## Repository layout
 
@@ -65,7 +65,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. The page displays a Phase 0 status panel and a backend-health placeholder.
+Open `http://localhost:3000`. The interface supports repository indexing, repository-file exploration, source inspection, conversational questions with clickable citations, and an optional retrieval inspection panel. Set `NEXT_PUBLIC_API_URL` in `.env` when the backend is not running at `http://localhost:8000`.
 
 ## Current scope
 

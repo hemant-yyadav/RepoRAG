@@ -2,6 +2,7 @@
 
 import math
 import re
+from collections.abc import Mapping
 from collections import Counter
 from dataclasses import dataclass
 from typing import Iterable
@@ -59,7 +60,9 @@ class BM25Index:
         self._document_frequencies.pop(repository_id, None)
         self._average_lengths.pop(repository_id, None)
 
-    def search(self, repository_id: str, query: str, limit: int) -> list[LexicalSearchResult]:
+    def search(
+        self, repository_id: str, query: str, limit: int, metadata_filters: Mapping[str, str | int | bool] | None = None
+    ) -> list[LexicalSearchResult]:
         if limit < 1:
             raise ValueError("lexical search limit must be positive")
         documents = self._documents.get(repository_id, [])
@@ -73,6 +76,8 @@ class BM25Index:
         document_count = len(documents)
         results: list[LexicalSearchResult] = []
         for document in documents:
+            if metadata_filters and not _matches_metadata(document.chunk, metadata_filters):
+                continue
             score = 0.0
             for token in set(query_tokens):
                 frequency = document.term_frequencies.get(token, 0)
@@ -102,6 +107,17 @@ def tokenize_code(text: str) -> list[str]:
 
 def _searchable_text(chunk: CodeChunk) -> str:
     return "\n".join(filter(None, [chunk.file_path, chunk.symbol_name or "", chunk.content]))
+
+
+def _matches_metadata(chunk: CodeChunk, filters: Mapping[str, str | int | bool]) -> bool:
+    values: dict[str, str | int | bool | None] = {
+        "file_path": chunk.file_path,
+        "language": chunk.language,
+        "symbol_name": chunk.symbol_name,
+        "chunk_type": chunk.chunk_type,
+        **chunk.metadata,
+    }
+    return all(values.get(key) == value for key, value in filters.items())
 
 
 _shared_lexical_index = BM25Index()

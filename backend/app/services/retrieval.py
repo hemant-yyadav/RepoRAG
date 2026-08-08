@@ -1,6 +1,7 @@
 """Basic repository-isolated semantic retrieval, without generation or reranking."""
 
 from collections.abc import Sequence
+from collections.abc import Mapping
 from typing import Protocol
 
 from app.core.config import Settings
@@ -22,6 +23,7 @@ class VectorSearcher(Protocol):
         query_vector: Sequence[float],
         limit: int,
         score_threshold: float | None = None,
+        metadata_filters: Mapping[str, str | int | bool] | None = None,
     ) -> list[StoredSearchResult]:
         """Return only points belonging to the requested repository."""
 
@@ -47,6 +49,7 @@ class RetrievalService:
         query: str,
         top_k: int | None = None,
         score_threshold: float | None = None,
+        metadata_filters: Mapping[str, str | int | bool] | None = None,
     ) -> list[RetrievalResult]:
         if not repository_id.strip():
             raise ValueError("repository_id must not be blank")
@@ -60,7 +63,7 @@ class RetrievalService:
         vectors = self._embedder.embed_texts([query])
         if len(vectors) != 1:
             raise ValueError("query embedding provider returned an invalid vector count")
-        stored_results = self._vector_store.similarity_search(repository_id, vectors[0], limit, threshold)
+        stored_results = self._vector_store.similarity_search(repository_id, vectors[0], limit, threshold, metadata_filters)
         return [self._to_result(stored) for stored in stored_results]
 
     @staticmethod

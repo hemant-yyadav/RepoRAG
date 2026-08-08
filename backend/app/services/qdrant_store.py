@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from qdrant_client import QdrantClient, models
 
 from app.models.embedding import EmbeddedChunk
+from app.models.chunk import CodeChunk
 
 logger = logging.getLogger(__name__)
 POINT_NAMESPACE = uuid.UUID("0de7d8c3-5910-48bb-bd81-cc78732cc1ad")
@@ -24,6 +25,11 @@ class RepositoryIndexStatus:
 class StoredSearchResult:
     score: float
     payload: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class StoredChunk:
+    chunk: CodeChunk
 
 
 class QdrantStore:
@@ -101,16 +107,20 @@ class QdrantStore:
         query_vector: Sequence[float],
         limit: int,
         score_threshold: float | None = None,
+        metadata_filters: Mapping[str, str | int | bool] | None = None,
     ) -> list[StoredSearchResult]:
         """Run a repository-scoped vector search; answer generation is out of scope."""
         if limit < 1:
             raise ValueError("search limit must be positive")
         if not self._client.collection_exists(self.collection_name):
             return []
+        criteria: dict[str, str | int | bool] = {"repository_id": repository_id}
+        if metadata_filters:
+            criteria.update(metadata_filters)
         response = self._client.query_points(
             collection_name=self.collection_name,
             query=list(query_vector),
-            query_filter=self.repository_filter(repository_id),
+            query_filter=metadata_filter(criteria),
             limit=limit,
             score_threshold=score_threshold,
             with_payload=True,
@@ -120,6 +130,25 @@ class QdrantStore:
             StoredSearchResult(score=point.score, payload=dict(point.payload or {}))
             for point in response.points
         ]
+
+    def list_chunks(
+        self, repository_id: str, filters: Mapping[str, str | int | bool] | None = None, limit: int = 200
+    ) -> list[StoredChunk]:
+        """List exact repository chunks by metadata for file/symbol inspection."""
+        if limit < 1 or not self._client.collection_exists(self.collection_name):
+            return []
+        criteria: dict[str, str | int | bool] = {"repository_id": repository_id}
+        if filters:
+            criteria.update(filters)
+        points, _ = self._client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=metadata_filter(criteria),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        chunks = [StoredChunk(chunk=chunk_from_payload(dict(point.payload or {}))) for point in points]
+        return sorted(chunks, key=lambda item: (item.chunk.file_path, item.chunk.start_line, item.chunk.chunk_id))
 
     @staticmethod
     def repository_filter(repository_id: str) -> models.Filter:
@@ -155,4 +184,24 @@ def metadata_filter(criteria: Mapping[str, str | int | bool]) -> models.Filter:
             models.FieldCondition(key=key, match=models.MatchValue(value=value))
             for key, value in criteria.items()
         ]
+    )
+
+
+def chunk_from_payload(payload: Mapping[str, object]) -> CodeChunk:
+    """Reconstruct a chunk from Qdrant payload metadata without trusting external callers."""
+    core_keys = {
+        "repository_id", "chunk_id", "file_path", "language", "start_line", "end_line",
+        "symbol_name", "chunk_type", "content", "content_hash",
+    }
+    return CodeChunk(
+        chunk_id=str(payload["chunk_id"]),
+        repository_id=str(payload["repository_id"]),
+        file_path=str(payload["file_path"]),
+        language=str(payload["language"]),
+        content=str(payload["content"]),
+        start_line=int(payload["start_line"]),
+        end_line=int(payload["end_line"]),
+        symbol_name=str(payload["symbol_name"]) if payload.get("symbol_name") is not None else None,
+        chunk_type=str(payload["chunk_type"]),
+        metadata={key: value for key, value in payload.items() if key not in core_keys and isinstance(value, (str, int, bool))},
     )

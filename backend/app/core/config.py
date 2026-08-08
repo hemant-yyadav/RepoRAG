@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     reranker_fail_open: bool = True
     conversation_max_history_messages: int = 12
     conversation_rewrite_history_length: int = 6
+    file_inspection_max_chunks: int = 200
     generation_max_context_chars: int = 20_000
     generation_max_context_chunks: int = 12
 
